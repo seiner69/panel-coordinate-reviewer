@@ -1,0 +1,19 @@
+{
+  "title": "合成画格坐标示例",
+  "stream_image": "stream.png",
+  "candidates_file": "candidates.json",
+  "state_file": "review-state.json",
+  "context_margin": 140,
+  "panel_types": [
+    "single_panel",
+    "continuous_long_panel",
+    "composite_panel",
+    "separator_or_text",
+    "non_story"
+  ],
+  "sources": [
+    {"name": "synthetic-part-a", "global_y0": 0, "global_y1": 320},
+    {"name": "synthetic-part-b", "global_y0": 320, "global_y1": 640},
+    {"name": "synthetic-part-c", "global_y0": 640, "global_y1": 960}
+  ]
+}

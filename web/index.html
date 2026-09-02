@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>画格坐标审核</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1 id="datasetTitle">画格坐标审核</h1>
+      <div id="counts" class="muted">正在读取审核状态…</div>
+    </div>
+    <div class="toolbar">
+      <button id="prevBtn">← 上一格</button>
+      <button id="nextBtn">下一格 →</button>
+      <button id="approveBtn" class="approve">通过 A</button>
+      <button id="rejectBtn" class="reject">驳回 R</button>
+      <button id="pendingBtn">恢复待审 P</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-head">
+        <input id="filterInput" placeholder="筛选编号/类型/状态">
+      </div>
+      <ol id="candidateList"></ol>
+    </aside>
+
+    <section class="workspace">
+      <div class="inspector">
+        <div class="identity">
+          <strong id="candidateTitle">—</strong>
+          <span id="crossBadge" class="badge hidden">跨源</span>
+          <span id="saveState" class="save-state">未修改</span>
+        </div>
+        <div class="controls-grid">
+          <label>类型<select id="typeSelect"></select></label>
+          <label>拆分全局 Y<input id="splitY" type="number" step="1"></label>
+          <button id="splitBtn">在 Y 处拆分 S</button>
+          <button id="mergePrevBtn">与上一格合并</button>
+          <button id="mergeNextBtn">与下一格合并 M</button>
+        </div>
+        <label class="note-label">审核备注
+          <textarea id="noteInput" rows="2" placeholder="记录边界、类型、拆分或驳回原因"></textarea>
+        </label>
+        <div id="coordinateText" class="mono"></div>
+        <div id="sourceText" class="source-text"></div>
+        <p class="hint">拖动红框四边微调；虚线是可选的来源接缝。J/K 或方向键切换，A 通过，R 驳回，P 待审，S 拆分，M 与下一格合并。</p>
+      </div>
+
+      <div id="previewScroller" class="preview-scroller">
+        <div id="imageStage" class="image-stage">
+          <img id="contextImage" alt="候选及上下文预览">
+          <div id="sourceBoundaryLayer" class="boundary-layer"></div>
+          <div id="candidateRect" class="candidate-rect">
+            <div class="handle top" data-edge="top"></div>
+            <div class="handle bottom" data-edge="bottom"></div>
+            <div class="handle left" data-edge="left"></div>
+            <div class="handle right" data-edge="right"></div>
+            <span class="rect-label">当前候选</span>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+{
+  "items": [
+    {"provisional_id": "panel_001", "x0": 24, "x1": 296, "global_y0": 45, "global_y1": 265, "panel_type": "single_panel"},
+    {"provisional_id": "panel_002", "x0": 12, "x1": 308, "global_y0": 280, "global_y1": 470, "panel_type": "continuous_long_panel"},
+    {"provisional_id": "panel_003", "x0": 32, "x1": 288, "global_y0": 655, "global_y1": 890, "panel_type": "composite_panel"}
+  ]
+}

@@ -1,0 +1,58 @@
+:root { color-scheme: dark; font-family: "Segoe UI", "Microsoft YaHei", sans-serif; background: #111318; color: #eef1f5; }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; overflow: hidden; }
+button, input, select, textarea { font: inherit; }
+button { border: 1px solid #515866; border-radius: 7px; background: #262b34; color: #f5f7fa; padding: 7px 11px; cursor: pointer; }
+button:hover { background: #343b47; }
+button:disabled { opacity: .4; cursor: default; }
+.approve { border-color: #2e9b62; background: #17603e; }
+.reject { border-color: #c65454; background: #702929; }
+.topbar { min-height: 78px; display: flex; justify-content: space-between; align-items: center; gap: 18px; padding: 10px 16px; border-bottom: 1px solid #343943; background: #191c22; }
+h1 { margin: 0 0 5px; font-size: 18px; }
+.muted, .hint, .source-text { color: #aeb6c3; }
+.toolbar { display: flex; gap: 7px; flex-wrap: wrap; justify-content: flex-end; }
+.layout { display: grid; grid-template-columns: 286px 1fr; height: calc(100vh - 78px); }
+.sidebar { border-right: 1px solid #343943; background: #171a20; overflow: hidden; }
+.sidebar-head { padding: 10px; border-bottom: 1px solid #343943; }
+#filterInput { width: 100%; padding: 8px; background: #0f1116; border: 1px solid #454c58; color: #fff; border-radius: 6px; }
+#candidateList { margin: 0; padding: 0; list-style: none; height: calc(100% - 55px); overflow: auto; }
+#candidateList li { display: grid; grid-template-columns: 32px 1fr auto; gap: 8px; padding: 8px 10px; border-bottom: 1px solid #2a2f38; cursor: pointer; font-size: 12px; }
+#candidateList li:hover { background: #252a33; }
+#candidateList li.current { background: #303744; outline: 1px solid #778397; }
+.status-dot { width: 9px; height: 9px; border-radius: 50%; margin-top: 4px; background: #858d99; }
+.status-dot.approved { background: #40c97d; }
+.status-dot.rejected { background: #ef6868; }
+.item-type { color: #9ca6b6; }
+.workspace { min-width: 0; display: grid; grid-template-rows: auto 1fr; }
+.inspector { padding: 10px 14px; border-bottom: 1px solid #343943; background: #1b1f26; }
+.identity { display: flex; align-items: center; gap: 9px; margin-bottom: 8px; }
+.badge { background: #b36d17; color: white; border-radius: 999px; padding: 2px 8px; font-size: 12px; }
+.hidden { display: none; }
+.save-state { margin-left: auto; color: #86d2a7; font-size: 12px; }
+.controls-grid { display: grid; grid-template-columns: 220px 160px auto auto auto; gap: 8px; align-items: end; }
+label { display: grid; gap: 4px; color: #bec5d0; font-size: 12px; }
+select, input, textarea { border: 1px solid #454c58; border-radius: 5px; background: #0f1116; color: #fff; padding: 6px; }
+.note-label { margin-top: 8px; }
+.mono { margin-top: 8px; font: 12px Consolas, monospace; color: #d6dbe3; }
+.source-text { margin-top: 4px; font-size: 12px; word-break: break-all; }
+.hint { margin: 7px 0 0; font-size: 12px; }
+.preview-scroller { overflow: auto; background: #0d0f13; padding: 18px 30px 80px; }
+.image-stage { position: relative; margin: 0 auto; box-shadow: 0 0 0 1px #4c5360, 0 8px 30px #000; }
+#contextImage { display: block; width: 100%; height: auto; user-select: none; -webkit-user-drag: none; }
+.boundary-layer { position: absolute; inset: 0; pointer-events: none; }
+.source-boundary { position: absolute; left: 0; width: 100%; border-top: 2px dashed rgba(32, 210, 255, .9); color: #87e8ff; font: 11px Consolas, monospace; text-shadow: 0 1px 2px #000; }
+.source-boundary span { position: absolute; left: 4px; top: 2px; background: rgba(0, 0, 0, .72); padding: 2px 4px; }
+.candidate-rect { position: absolute; border: 4px solid #ff334f; background: rgba(255, 35, 67, .07); box-shadow: 0 0 0 1px rgba(255,255,255,.65) inset; }
+.rect-label { position: absolute; left: -4px; top: -25px; background: #ff334f; color: white; padding: 3px 7px; font-size: 12px; white-space: nowrap; }
+.handle { position: absolute; background: rgba(255,255,255,.02); }
+.handle.top, .handle.bottom { left: -6px; width: calc(100% + 12px); height: 14px; cursor: ns-resize; }
+.handle.top { top: -8px; }
+.handle.bottom { bottom: -8px; }
+.handle.left, .handle.right { top: -6px; height: calc(100% + 12px); width: 14px; cursor: ew-resize; }
+.handle.left { left: -8px; }
+.handle.right { right: -8px; }
+.fatal { padding: 24px; white-space: pre-wrap; }
+@media (max-width: 1050px) {
+  .layout { grid-template-columns: 225px 1fr; }
+  .controls-grid { grid-template-columns: 1fr 140px 1fr; }
+}
