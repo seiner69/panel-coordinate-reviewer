@@ -16,7 +16,11 @@ const scroller = byId("previewScroller");
 
 async function api(url, options = {}) {
   const response = await fetch(url, options);
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) {
+    const error = new Error(await response.text());
+    error.status = response.status;
+    throw error;
+  }
   return response.json();
 }
 
@@ -141,7 +145,9 @@ async function saveReview() {
     renderList();
     renderMetadata();
   } catch (error) {
-    byId("saveState").textContent = `保存失败：${error.message}`;
+    byId("saveState").textContent = error.status === 409
+      ? "保存冲突：其他窗口已更新，请刷新后重做当前修改"
+      : `保存失败：${error.message}`;
   }
 }
 

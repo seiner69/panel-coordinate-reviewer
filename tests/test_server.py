@@ -8,7 +8,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from server import Dataset, ReviewHandler
+from server import Dataset, ReviewHandler, StateConflict
 
 
 class DatasetTests(unittest.TestCase):
@@ -43,6 +43,7 @@ class DatasetTests(unittest.TestCase):
     def test_initializes_state_and_cross_source_metadata(self) -> None:
         dataset = Dataset(self.root)
         self.assertTrue((self.root / "review-state.json").is_file())
+        self.assertEqual(dataset.state["revision"], 0)
         item = dataset.state["items"][0]
         self.assertEqual(item["source_files"], ["a", "b"])
         self.assertTrue(item["cross_source"])
@@ -74,6 +75,16 @@ class DatasetTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "escapes data directory"):
             Dataset(self.root)
 
+    def test_rejects_stale_full_state_save(self) -> None:
+        dataset = Dataset(self.root)
+        first_tab = json.loads(json.dumps(dataset.state))
+        second_tab = json.loads(json.dumps(dataset.state))
+
+        saved = dataset.save_state(first_tab)
+        self.assertEqual(saved["revision"], 1)
+        with self.assertRaisesRegex(StateConflict, "stale review revision"):
+            dataset.save_state(second_tab)
+
     def test_http_state_and_context_image(self) -> None:
         dataset = Dataset(self.root)
         ReviewHandler.dataset = dataset
@@ -87,6 +98,28 @@ class DatasetTests(unittest.TestCase):
             state = json.loads(response.read().decode("utf-8"))
             self.assertEqual(response.status, 200)
             self.assertEqual(state["dataset_title"], "Test dataset")
+
+            connection.request(
+                "POST",
+                "/api/state",
+                body=json.dumps(state),
+                headers={"Content-Type": "application/json"},
+            )
+            saved_response = connection.getresponse()
+            saved = json.loads(saved_response.read().decode("utf-8"))
+            self.assertEqual(saved_response.status, 200)
+            self.assertEqual(saved["revision"], 1)
+
+            connection.request(
+                "POST",
+                "/api/state",
+                body=json.dumps(state),
+                headers={"Content-Type": "application/json"},
+            )
+            conflict_response = connection.getresponse()
+            conflict = json.loads(conflict_response.read().decode("utf-8"))
+            self.assertEqual(conflict_response.status, 409)
+            self.assertIn("stale review revision", conflict["error"])
 
             connection.request("GET", "/api/context-image?y0=130&y1=170")
             image_response = connection.getresponse()

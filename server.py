@@ -6,6 +6,7 @@ import io
 import json
 import os
 import tempfile
+import threading
 from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -25,6 +26,10 @@ DEFAULT_PANEL_TYPES = [
     "non_story",
 ]
 STATUSES = {"pending", "approved", "rejected"}
+
+
+class StateConflict(Exception):
+    """Raised when a stale browser attempts to overwrite newer review state."""
 
 
 def load_json(path: Path) -> Any:
@@ -50,6 +55,7 @@ def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
 class Dataset:
     def __init__(self, data_dir: Path) -> None:
         self.data_dir = data_dir.resolve()
+        self._save_lock = threading.RLock()
         project_path = self.data_dir / "project.json"
         project = load_json(project_path)
         if not isinstance(project, dict):
@@ -134,11 +140,15 @@ class Dataset:
         if isinstance(payload, list):
             items = payload
             current_index = 0
+            revision = 0
         elif isinstance(payload, dict):
             items = payload.get("items")
             current_index = int(payload.get("current_index", 0))
+            revision = payload.get("revision", 0)
         else:
             raise ValueError("state must be an object or a list")
+        if isinstance(revision, bool) or not isinstance(revision, int) or revision < 0:
+            raise ValueError("revision must be a non-negative integer")
         if not isinstance(items, list) or not items:
             raise ValueError("items must be a non-empty list")
 
@@ -189,6 +199,7 @@ class Dataset:
         current_index = max(0, min(current_index, len(normalized) - 1))
         return {
             "schema_version": 1,
+            "revision": revision,
             "dataset_title": self.title,
             "coordinate_convention": "zero-based half-open",
             "stream_width": self.stream_width,
@@ -201,10 +212,21 @@ class Dataset:
         }
 
     def save_state(self, payload: Any) -> dict[str, Any]:
-        normalized = self.normalize_state(payload)
-        atomic_write_json(self.state_path, normalized)
-        self.state = normalized
-        return normalized
+        if not isinstance(payload, dict):
+            raise ValueError("saved state must be an object")
+        with self._save_lock:
+            submitted_revision = payload.get("revision")
+            current_revision = self.state["revision"]
+            if submitted_revision != current_revision:
+                raise StateConflict(
+                    f"stale review revision: expected {current_revision}, got {submitted_revision}"
+                )
+            candidate = dict(payload)
+            candidate["revision"] = current_revision + 1
+            normalized = self.normalize_state(candidate)
+            atomic_write_json(self.state_path, normalized)
+            self.state = normalized
+            return normalized
 
     def context_bounds(self, y0: int, y1: int) -> tuple[int, int]:
         if not (0 <= y0 < y1 <= self.stream_height):
@@ -278,6 +300,8 @@ class ReviewHandler(SimpleHTTPRequestHandler):
                 raise ValueError("invalid request length")
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
             self.send_json(self.dataset.save_state(payload))
+        except StateConflict as exc:
+            self.send_json({"error": str(exc)}, HTTPStatus.CONFLICT)
         except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
             self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
 
