@@ -5,6 +5,7 @@ import threading
 import unittest
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from unittest.mock import patch
 
 from PIL import Image
 
@@ -84,6 +85,43 @@ class DatasetTests(unittest.TestCase):
         self.assertEqual(saved["revision"], 1)
         with self.assertRaisesRegex(StateConflict, "stale review revision"):
             dataset.save_state(second_tab)
+
+    def test_writes_content_minimized_audit_event(self) -> None:
+        dataset = Dataset(self.root)
+        payload = json.loads(json.dumps(dataset.state))
+        payload["items"][0]["review_status"] = "approved"
+        payload["items"][0]["reviewer_note"] = "private review detail"
+
+        dataset.save_state(payload)
+
+        events_path = self.root / "review-events.jsonl"
+        events = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["revision"], 1)
+        self.assertEqual(
+            events[0]["changed_fields_by_item"],
+            {"one": ["review_status", "reviewer_note"]},
+        )
+        self.assertNotIn("private review detail", events_path.read_text(encoding="utf-8"))
+
+    def test_rejects_event_log_path_collision(self) -> None:
+        project = json.loads((self.root / "project.json").read_text(encoding="utf-8"))
+        project["events_file"] = "review-state.json"
+        (self.root / "project.json").write_text(json.dumps(project), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "must not overwrite"):
+            Dataset(self.root)
+
+    def test_audit_failure_does_not_turn_saved_state_into_failed_request(self) -> None:
+        dataset = Dataset(self.root)
+        payload = json.loads(json.dumps(dataset.state))
+        payload["items"][0]["review_status"] = "approved"
+
+        with patch("server.append_json_line", side_effect=OSError("test failure")):
+            saved = dataset.save_state(payload)
+
+        self.assertEqual(saved["revision"], 1)
+        persisted = json.loads((self.root / "review-state.json").read_text(encoding="utf-8"))
+        self.assertEqual(persisted["revision"], 1)
 
     def test_http_state_and_context_image(self) -> None:
         dataset = Dataset(self.root)

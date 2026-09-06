@@ -52,6 +52,16 @@ def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
         raise
 
 
+def append_json_line(path: Path, payload: dict[str, Any]) -> None:
+    """Append one durable JSONL record without serializing review content."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8", newline="\n") as handle:
+        json.dump(payload, handle, ensure_ascii=False, separators=(",", ":"))
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
 class Dataset:
     def __init__(self, data_dir: Path) -> None:
         self.data_dir = data_dir.resolve()
@@ -65,7 +75,11 @@ class Dataset:
         self.image_path = self._resolve_local(str(project.get("stream_image", "stream.png")))
         self.candidates_path = self._resolve_local(str(project.get("candidates_file", "candidates.json")))
         self.state_path = self._resolve_local(str(project.get("state_file", "review-state.json")))
+        self.events_path = self._resolve_local(str(project.get("events_file", "review-events.jsonl")))
         self.context_margin = max(0, int(project.get("context_margin", 600)))
+        protected_paths = {self.image_path, self.candidates_path, self.state_path}
+        if self.events_path in protected_paths:
+            raise ValueError("events_file must not overwrite an input or state file")
 
         raw_types = project.get("panel_types", DEFAULT_PANEL_TYPES)
         if not isinstance(raw_types, list) or not raw_types:
@@ -224,9 +238,53 @@ class Dataset:
             candidate = dict(payload)
             candidate["revision"] = current_revision + 1
             normalized = self.normalize_state(candidate)
+            event = self._summarize_change(self.state, normalized)
             atomic_write_json(self.state_path, normalized)
             self.state = normalized
+            try:
+                append_json_line(self.events_path, event)
+            except OSError as exc:
+                # The state file is authoritative. Do not make the browser retry a
+                # successful save with a now-stale revision when only audit logging fails.
+                print(f"Warning: review state saved, but audit event was not appended: {exc}")
             return normalized
+
+    @staticmethod
+    def _summarize_change(
+        previous: dict[str, Any], current: dict[str, Any]
+    ) -> dict[str, Any]:
+        tracked_fields = (
+            "x0",
+            "x1",
+            "global_y0",
+            "global_y1",
+            "panel_type",
+            "review_status",
+            "reviewer_note",
+        )
+        before = {item["provisional_id"]: item for item in previous["items"]}
+        after = {item["provisional_id"]: item for item in current["items"]}
+        added = sorted(after.keys() - before.keys())
+        removed = sorted(before.keys() - after.keys())
+        changed = {
+            item_id: [
+                field
+                for field in tracked_fields
+                if before[item_id].get(field) != after[item_id].get(field)
+            ]
+            for item_id in sorted(before.keys() & after.keys())
+        }
+        changed = {item_id: fields for item_id, fields in changed.items() if fields}
+        return {
+            "schema_version": 1,
+            "revision": current["revision"],
+            "updated_at": current["updated_at"],
+            "added_item_ids": added,
+            "removed_item_ids": removed,
+            "changed_fields_by_item": changed,
+            "current_index_changed": previous["current_index"] != current["current_index"],
+            "item_count": len(current["items"]),
+        }
 
     def context_bounds(self, y0: int, y1: int) -> tuple[int, int]:
         if not (0 <= y0 < y1 <= self.stream_height):
