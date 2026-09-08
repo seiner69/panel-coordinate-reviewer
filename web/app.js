@@ -25,6 +25,7 @@ async function api(url, options = {}) {
 }
 
 function current() { return review.items[currentIndex]; }
+function isLocked(item = current()) { return (review.locked_panel_ids || []).includes(item.provisional_id); }
 function statusLabel(status) { return status === "approved" ? "通过" : status === "rejected" ? "驳回" : "待审"; }
 
 function updateCounts() {
@@ -46,7 +47,7 @@ function renderList() {
     number.textContent = String(index + 1);
     const details = document.createElement("span");
     const name = document.createElement("strong");
-    name.textContent = item.provisional_id;
+    name.textContent = item.provisional_id + (isLocked(item) ? " · 只读" : "");
     const type = document.createElement("span");
     type.className = "item-type";
     type.textContent = item.panel_type;
@@ -64,7 +65,12 @@ function renderList() {
 
 function renderMetadata() {
   const item = current();
-  byId("candidateTitle").textContent = `${item.provisional_id} · 顺序 ${currentIndex + 1}/${review.items.length} · ${statusLabel(item.review_status)}`;
+  const locked = isLocked(item);
+  byId("candidateTitle").textContent = `${item.provisional_id} · 顺序 ${currentIndex + 1}/${review.items.length} · ${statusLabel(item.review_status)}${locked ? " · 已锁定，只读" : ""}`;
+  for (const id of ["typeSelect", "noteInput", "splitY", "splitBtn", "approveBtn", "rejectBtn", "pendingBtn"]) {
+    byId(id).disabled = locked;
+  }
+  rectEl.style.pointerEvents = locked ? "none" : "";
   byId("crossBadge").classList.toggle("hidden", !item.cross_source);
   byId("typeSelect").value = item.panel_type;
   byId("noteInput").value = item.reviewer_note || "";
@@ -72,9 +78,9 @@ function renderMetadata() {
   byId("coordinateText").textContent = `x=[${item.x0},${item.x1})  y=[${item.global_y0},${item.global_y1})  ${item.width}×${item.height}`;
   byId("sourceText").textContent = item.source_files.length ? `来源：${item.source_files.join("、")}` : "未配置来源分段";
   byId("prevBtn").disabled = currentIndex === 0;
-  byId("mergePrevBtn").disabled = currentIndex === 0;
+  byId("mergePrevBtn").disabled = locked || currentIndex === 0 || isLocked(review.items[currentIndex - 1]);
   byId("nextBtn").disabled = currentIndex >= review.items.length - 1;
-  byId("mergeNextBtn").disabled = currentIndex >= review.items.length - 1;
+  byId("mergeNextBtn").disabled = locked || currentIndex >= review.items.length - 1 || isLocked(review.items[currentIndex + 1]);
 }
 
 async function loadContext() {
@@ -152,6 +158,7 @@ async function saveReview() {
 }
 
 function setStatus(status) {
+  if (isLocked()) return;
   current().review_status = status;
   renderList();
   renderMetadata();
@@ -160,6 +167,7 @@ function setStatus(status) {
 
 function splitCurrent() {
   const item = current();
+  if (isLocked(item)) return;
   const splitY = Number(byId("splitY").value);
   if (!Number.isInteger(splitY) || splitY <= item.global_y0 || splitY >= item.global_y1) {
     alert(`拆分坐标必须严格位于 (${item.global_y0}, ${item.global_y1}) 内。`);
@@ -177,6 +185,7 @@ function splitCurrent() {
 
 function mergeWith(index) {
   if (index < 0 || index >= review.items.length || index === currentIndex) return;
+  if (isLocked() || isLocked(review.items[index])) return;
   const firstIndex = Math.min(index, currentIndex);
   const secondIndex = Math.max(index, currentIndex);
   const first = review.items[firstIndex];
@@ -202,13 +211,14 @@ function mergeWith(index) {
 }
 
 function beginDrag(event) {
+  if (isLocked()) return;
   event.preventDefault();
   drag = {edge: event.currentTarget.dataset.edge, pointerId: event.pointerId};
   event.currentTarget.setPointerCapture(event.pointerId);
 }
 
 function dragMove(event) {
-  if (!drag) return;
+  if (!drag || isLocked()) return;
   const bounds = imageEl.getBoundingClientRect();
   const item = current();
   if (drag.edge === "left" || drag.edge === "right") {
@@ -244,8 +254,8 @@ function bindEvents() {
   byId("mergePrevBtn").onclick = () => mergeWith(currentIndex - 1);
   byId("mergeNextBtn").onclick = () => mergeWith(currentIndex + 1);
   byId("filterInput").oninput = renderList;
-  byId("typeSelect").onchange = event => { current().panel_type = event.target.value; current().review_status = "pending"; renderList(); queueSave(true); };
-  byId("noteInput").oninput = event => { current().reviewer_note = event.target.value; queueSave(false); };
+  byId("typeSelect").onchange = event => { if (isLocked()) return; current().panel_type = event.target.value; current().review_status = "pending"; renderList(); queueSave(true); };
+  byId("noteInput").oninput = event => { if (isLocked()) return; current().reviewer_note = event.target.value; queueSave(false); };
   document.querySelectorAll(".handle").forEach(handle => {
     handle.addEventListener("pointerdown", beginDrag);
     handle.addEventListener("pointermove", dragMove);

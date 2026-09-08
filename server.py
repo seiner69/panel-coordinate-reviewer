@@ -77,6 +77,13 @@ class Dataset:
         self.state_path = self._resolve_local(str(project.get("state_file", "review-state.json")))
         self.events_path = self._resolve_local(str(project.get("events_file", "review-events.jsonl")))
         self.context_margin = max(0, int(project.get("context_margin", 600)))
+        locked_ids = project.get("locked_panel_ids", [])
+        if (not isinstance(locked_ids, list)
+                or any(not isinstance(value, str) or not value.strip() for value in locked_ids)
+                or len(set(locked_ids)) != len(locked_ids)):
+            raise ValueError("locked_panel_ids must contain unique non-empty strings")
+        self.locked_panel_ids = list(locked_ids)
+        self._locked_items: dict[str, dict[str, Any]] = {}
         protected_paths = {self.image_path, self.candidates_path, self.state_path}
         if self.events_path in protected_paths:
             raise ValueError("events_file must not overwrite an input or state file")
@@ -106,6 +113,14 @@ class Dataset:
         else:
             initial = load_json(self.candidates_path)
         self.state = self.normalize_state(initial)
+        items_by_id = {item["provisional_id"]: item for item in self.state["items"]}
+        if set(self.locked_panel_ids) - items_by_id.keys():
+            raise ValueError("locked_panel_ids contains an unknown candidate ID")
+        self._locked_items = {
+            item_id: self._lock_signature(items_by_id[item_id])
+            for item_id in self.locked_panel_ids
+        }
+        self._validate_locked_state(self.state)
         if not self.state_path.exists():
             atomic_write_json(self.state_path, self.state)
 
@@ -219,11 +234,31 @@ class Dataset:
             "stream_width": self.stream_width,
             "stream_height": self.stream_height,
             "panel_types": self.panel_types,
+            "locked_panel_ids": list(self.locked_panel_ids),
             "source_boundaries": self.boundaries,
             "current_index": current_index,
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "items": normalized,
         }
+
+    @staticmethod
+    def _lock_signature(item: dict[str, Any]) -> dict[str, Any]:
+        # Inserting a neighboring candidate may change list order, not its content.
+        return {key: value for key, value in item.items() if key != "order"}
+
+    def _validate_locked_state(self, state: dict[str, Any]) -> None:
+        items = {item["provisional_id"]: item for item in state["items"]}
+        for item_id, expected in self._locked_items.items():
+            if item_id not in items or self._lock_signature(items[item_id]) != expected:
+                raise ValueError(f"locked candidate cannot be modified or removed: {item_id}")
+        for item in state["items"]:
+            if item["provisional_id"] in self._locked_items:
+                continue
+            for locked in self._locked_items.values():
+                if (max(item["x0"], locked["x0"]) < min(item["x1"], locked["x1"])
+                        and max(item["global_y0"], locked["global_y0"])
+                        < min(item["global_y1"], locked["global_y1"])):
+                    raise ValueError("candidate overlaps a locked region")
 
     def save_state(self, payload: Any) -> dict[str, Any]:
         if not isinstance(payload, dict):
@@ -238,6 +273,7 @@ class Dataset:
             candidate = dict(payload)
             candidate["revision"] = current_revision + 1
             normalized = self.normalize_state(candidate)
+            self._validate_locked_state(normalized)
             event = self._summarize_change(self.state, normalized)
             atomic_write_json(self.state_path, normalized)
             self.state = normalized

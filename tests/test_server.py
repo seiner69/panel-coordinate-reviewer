@@ -1,4 +1,5 @@
 import json
+import copy
 import http.client
 import tempfile
 import threading
@@ -55,6 +56,117 @@ class DatasetTests(unittest.TestCase):
         png, y0, y1 = dataset.context_png(130, 170)
         self.assertEqual((y0, y1), (110, 190))
         self.assertTrue(png.startswith(b"\x89PNG"))
+
+    def locked_dataset(self) -> Dataset:
+        project_path = self.root / "project.json"
+        project = json.loads(project_path.read_text(encoding="utf-8"))
+        project["locked_panel_ids"] = ["one"]
+        project_path.write_text(json.dumps(project), encoding="utf-8")
+        return Dataset(self.root)
+
+    def test_lock_configuration_rejects_invalid_ids_without_creating_state(self) -> None:
+        path = self.root / "project.json"
+        project = json.loads(path.read_text(encoding="utf-8"))
+        for ids in ["one", ["one", "one"], [""], [1], ["missing"]]:
+            project["locked_panel_ids"] = ids
+            path.write_text(json.dumps(project), encoding="utf-8")
+            with self.subTest(ids=ids), self.assertRaises(ValueError):
+                Dataset(self.root)
+            self.assertFalse((self.root / "review-state.json").exists())
+
+    def test_locked_content_cannot_be_edited_or_unlocked_by_payload(self) -> None:
+        dataset = self.locked_dataset()
+        original = dataset.state_path.read_bytes()
+        for field, value in [("x0", 11), ("global_y1", 180), ("panel_type", "composite"),
+                             ("review_status", "approved"), ("reviewer_note", "edit"),
+                             ("provisional_id", "renamed")]:
+            payload = copy.deepcopy(dataset.state)
+            payload["locked_panel_ids"] = []
+            payload["items"][0][field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, "locked candidate"):
+                dataset.save_state(payload)
+            self.assertEqual(dataset.state_path.read_bytes(), original)
+            self.assertEqual(dataset.state["revision"], 0)
+            self.assertFalse(dataset.events_path.exists())
+
+    def test_locked_deletion_split_and_merge_are_rejected(self) -> None:
+        dataset = self.locked_dataset()
+        one = dataset.state["items"][0]
+        variations = [
+            [dict(one, provisional_id="other", global_y0=200, global_y1=220)],
+            [dict(one, provisional_id="one_a", global_y1=150), dict(one, provisional_id="one_b", global_y0=150)],
+            [dict(one, provisional_id="one_plus_other", global_y1=220)],
+        ]
+        for items in variations:
+            payload = copy.deepcopy(dataset.state)
+            payload["items"] = items
+            with self.subTest(items=items), self.assertRaisesRegex(ValueError, "locked candidate"):
+                dataset.save_state(payload)
+
+    def test_locked_regions_reject_overlap_but_allow_touching_edges_and_order_changes(self) -> None:
+        dataset = self.locked_dataset()
+        one = dataset.state["items"][0]
+        for bounds in [dict(x0=20, x1=80, global_y0=140, global_y1=160),
+                       dict(x0=0, x1=100, global_y0=100, global_y1=200)]:
+            payload = copy.deepcopy(dataset.state)
+            payload["items"].append(dict(one, provisional_id="new", **bounds))
+            with self.assertRaisesRegex(ValueError, "overlaps a locked region"):
+                dataset.save_state(payload)
+        payload = copy.deepcopy(dataset.state)
+        payload["items"].append(dict(one, provisional_id="before", global_y0=110, global_y1=130))
+        payload["locked_panel_ids"] = []
+        saved = dataset.save_state(payload)
+        self.assertEqual(saved["items"][1]["provisional_id"], "one")
+        self.assertEqual(saved["locked_panel_ids"], ["one"])
+        self.assertEqual(saved["items"][1]["order"], 2)
+
+    def test_lock_uses_existing_state_snapshot_across_restart(self) -> None:
+        dataset = Dataset(self.root)
+        payload = copy.deepcopy(dataset.state)
+        payload["items"][0]["review_status"] = "approved"
+        dataset.save_state(payload)
+        locked = self.locked_dataset()
+        self.assertEqual(locked.state["items"][0]["review_status"], "approved")
+        locked.save_state(copy.deepcopy(locked.state))
+        restarted = Dataset(self.root)
+        payload = copy.deepcopy(restarted.state)
+        payload["items"][0]["review_status"] = "pending"
+        with self.assertRaisesRegex(ValueError, "locked candidate"):
+            restarted.save_state(payload)
+
+    def test_initial_overlap_fails_without_persisting_state(self) -> None:
+        candidates_path = self.root / "candidates.json"
+        payload = json.loads(candidates_path.read_text(encoding="utf-8"))
+        payload["items"].append(dict(payload["items"][0], provisional_id="overlap"))
+        candidates_path.write_text(json.dumps(payload), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "overlaps a locked region"):
+            self.locked_dataset()
+        self.assertFalse((self.root / "review-state.json").exists())
+
+    def test_http_rejects_locked_edit_without_changing_files(self) -> None:
+        dataset = self.locked_dataset()
+        ReviewHandler.dataset = dataset
+        server = ThreadingHTTPServer(("127.0.0.1", 0), ReviewHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        before = dataset.state_path.read_bytes()
+        connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+        try:
+            payload = copy.deepcopy(dataset.state)
+            payload["locked_panel_ids"] = []
+            payload["items"][0]["x0"] = 11
+            connection.request("POST", "/api/state", body=json.dumps(payload), headers={"Content-Type": "application/json"})
+            response = connection.getresponse()
+            error = json.loads(response.read())
+            self.assertEqual(response.status, 400)
+            self.assertIn("locked candidate", error["error"])
+            self.assertEqual(dataset.state_path.read_bytes(), before)
+            self.assertFalse(dataset.events_path.exists())
+        finally:
+            connection.close()
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
 
     def test_rejects_out_of_bounds_state(self) -> None:
         dataset = Dataset(self.root)
