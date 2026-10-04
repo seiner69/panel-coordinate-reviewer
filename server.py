@@ -342,6 +342,22 @@ class ReviewHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, directory=str(STATIC_ROOT), **kwargs)
 
+    def allow_local_request(self) -> bool:
+        """Reject foreign browser origins and DNS-rebinding hostnames."""
+        port = self.server.server_port
+        allowed_hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
+        if port == 80:
+            allowed_hosts.update({"127.0.0.1", "localhost"})
+        hosts = self.headers.get_all("Host", [])
+        if len(hosts) != 1 or hosts[0].lower() not in allowed_hosts:
+            self.send_error(HTTPStatus.FORBIDDEN, "Local host required")
+            return False
+        origins = self.headers.get_all("Origin", [])
+        if origins and (len(origins) != 1 or origins[0] != f"http://{hosts[0].lower()}"):
+            self.send_error(HTTPStatus.FORBIDDEN, "Same origin required")
+            return False
+        return True
+
     def send_json(self, payload: Any, status: int = 200) -> None:
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
@@ -352,6 +368,8 @@ class ReviewHandler(SimpleHTTPRequestHandler):
         self.wfile.write(data)
 
     def do_GET(self) -> None:
+        if not self.allow_local_request():
+            return
         parsed = urlparse(self.path)
         if parsed.path == "/api/state":
             self.send_json(self.dataset.state)
@@ -384,7 +402,13 @@ class ReviewHandler(SimpleHTTPRequestHandler):
             return
         super().do_GET()
 
+    def do_HEAD(self) -> None:
+        if self.allow_local_request():
+            super().do_HEAD()
+
     def do_POST(self) -> None:
+        if not self.allow_local_request():
+            return
         if urlparse(self.path).path != "/api/state":
             self.send_error(HTTPStatus.NOT_FOUND)
             return
