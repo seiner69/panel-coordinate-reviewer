@@ -1,6 +1,7 @@
 import json
 import copy
 import http.client
+import os
 import tempfile
 import threading
 import unittest
@@ -56,6 +57,73 @@ class DatasetTests(unittest.TestCase):
         png, y0, y1 = dataset.context_png(130, 170)
         self.assertEqual((y0, y1), (110, 190))
         self.assertTrue(png.startswith(b"\x89PNG"))
+
+    def assert_collision_rejected_without_writes(self) -> None:
+        before = {p.relative_to(self.root): p.read_bytes()
+                  for p in self.root.rglob("*") if p.is_file()}
+        with self.assertRaisesRegex(ValueError, "must not overwrite"):
+            Dataset(self.root)
+        after = {p.relative_to(self.root): p.read_bytes()
+                 for p in self.root.rglob("*") if p.is_file()}
+        self.assertEqual(after, before)
+
+    def test_outputs_cannot_replace_or_append_to_inputs(self) -> None:
+        path = self.root / "project.json"
+        original = json.loads(path.read_text(encoding="utf-8"))
+        for field in ("state_file", "events_file"):
+            for target in ("project.json", "candidates.json", "stream.png"):
+                with self.subTest(field=field, target=target):
+                    path.write_text(json.dumps({**original, field: target}), encoding="utf-8")
+                    self.assert_collision_rejected_without_writes()
+
+    def test_normalized_output_aliases_are_rejected(self) -> None:
+        path = self.root / "project.json"
+        original = json.loads(path.read_text(encoding="utf-8"))
+        (self.root / "nested").mkdir()
+        for field, target in (("state_file", "nested/../candidates.json"),
+                              ("events_file", "nested/../project.json")):
+            with self.subTest(field=field):
+                path.write_text(json.dumps({**original, field: target}), encoding="utf-8")
+                self.assert_collision_rejected_without_writes()
+
+    def test_hard_link_output_aliases_are_rejected(self) -> None:
+        path = self.root / "project.json"
+        original = json.loads(path.read_text(encoding="utf-8"))
+        alias = self.root / "alias.json"
+        for field, target in (("state_file", "candidates.json"),
+                              ("events_file", "project.json"),
+                              ("events_file", "review-state.json")):
+            with self.subTest(field=field, target=target):
+                if target == "review-state.json":
+                    path.write_text(json.dumps(original), encoding="utf-8")
+                    Dataset(self.root)
+                path.write_text(json.dumps({**original, field: alias.name}), encoding="utf-8")
+                try:
+                    os.link(self.root / target, alias)
+                except OSError as exc:
+                    self.skipTest(f"hard links unavailable: {exc}")
+                try:
+                    self.assert_collision_rejected_without_writes()
+                finally:
+                    alias.unlink()
+
+    def test_distinct_custom_outputs_preserve_inputs_across_save_and_restart(self) -> None:
+        path = self.root / "project.json"
+        project = json.loads(path.read_text(encoding="utf-8"))
+        project.update(state_file="output/state.json", events_file="output/events.jsonl")
+        path.write_text(json.dumps(project), encoding="utf-8")
+        before = {name: (self.root / name).read_bytes()
+                  for name in ("project.json", "candidates.json", "stream.png")}
+        dataset = Dataset(self.root)
+        payload = copy.deepcopy(dataset.state)
+        payload["items"][0]["review_status"] = "approved"
+        dataset.save_state(payload)
+        restarted = Dataset(self.root)
+        self.assertEqual(restarted.state["revision"], 1)
+        self.assertEqual(restarted.state["items"][0]["review_status"], "approved")
+        self.assertEqual(len(dataset.events_path.read_text(encoding="utf-8").splitlines()), 1)
+        for name, data in before.items():
+            self.assertEqual((self.root / name).read_bytes(), data)
 
     def locked_dataset(self) -> Dataset:
         project_path = self.root / "project.json"

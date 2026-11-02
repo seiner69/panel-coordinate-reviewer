@@ -36,6 +36,11 @@ def load_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def paths_alias(left: Path, right: Path) -> bool:
+    """Compare resolved destinations, including existing hard links."""
+    return left == right or (left.exists() and right.exists() and left.samefile(right))
+
+
 def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temp_name = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=path.parent)
@@ -66,7 +71,7 @@ class Dataset:
     def __init__(self, data_dir: Path) -> None:
         self.data_dir = data_dir.resolve()
         self._save_lock = threading.RLock()
-        project_path = self.data_dir / "project.json"
+        project_path = self._resolve_local("project.json")
         project = load_json(project_path)
         if not isinstance(project, dict):
             raise ValueError("project.json must contain an object")
@@ -84,8 +89,10 @@ class Dataset:
             raise ValueError("locked_panel_ids must contain unique non-empty strings")
         self.locked_panel_ids = list(locked_ids)
         self._locked_items: dict[str, dict[str, Any]] = {}
-        protected_paths = {self.image_path, self.candidates_path, self.state_path}
-        if self.events_path in protected_paths:
+        input_paths = (project_path, self.image_path, self.candidates_path)
+        if any(paths_alias(self.state_path, path) for path in input_paths):
+            raise ValueError("state_file must not overwrite an input file")
+        if any(paths_alias(self.events_path, path) for path in (*input_paths, self.state_path)):
             raise ValueError("events_file must not overwrite an input or state file")
 
         raw_types = project.get("panel_types", DEFAULT_PANEL_TYPES)
